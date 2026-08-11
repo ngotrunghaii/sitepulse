@@ -1,6 +1,9 @@
-export const metadata = {
-  title: 'SitePulse Dashboard',
-  description: 'Website Monitoring Dashboard',
+import type { Metadata } from 'next';
+import './globals.css';
+
+export const metadata: Metadata = {
+  title: 'SitePulse – Giám sát Uptime',
+  description: 'Giám sát uptime, thời gian phản hồi và sự cố website theo thời gian thực.',
 };
 
 export default function RootLayout({
@@ -9,10 +12,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body style={{ margin: 0, fontFamily: 'sans-serif', backgroundColor: '#f4f4f5' }}>
-        {children}
-      </body>
+    <html lang="vi">
+      <body>{children}</body>
     </html>
   );
 }
