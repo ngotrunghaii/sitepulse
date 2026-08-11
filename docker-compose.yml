@@ -1,0 +1,25 @@
+version: '3.8'
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: sitepulse
+      POSTGRES_PASSWORD: sitepulse_password
+      POSTGRES_DB: sitepulse_db
+    ports:
+      - '5432:5432'
+    volumes:
+      - sitepulse_db_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - '6379:6379'
+    volumes:
+      - sitepulse_redis_data:/data
+
+volumes:
+  sitepulse_db_data:
+  sitepulse_redis_data:

@@ -1,0 +1,22 @@
+{
+  "name": "sitepulse",
+  "version": "1.0.0",
+  "license": "MIT",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace=api\" \"npm run dev --workspace=web\" \"npm run dev --workspace=worker\"",
+    "build": "npm run build --workspaces --if-present",
+    "start": "concurrently \"npm run start --workspace=api\" \"npm run start --workspace=web\" \"npm run start --workspace=worker\"",
+    "lint": "npm run lint --workspaces --if-present",
+    "db:generate": "npm run generate --workspace=@sitepulse/database",
+    "db:push": "npm run push --workspace=@sitepulse/database"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.4",
+    "typescript": "^5.4.5"
+  }
+}
