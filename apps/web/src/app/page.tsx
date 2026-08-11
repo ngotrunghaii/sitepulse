@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { monitorsApi, Monitor, CreateMonitorDto } from '@/services/monitorsApi';
+import { monitorsApi, Monitor, CreateMonitorDto, CheckResult } from '@/services/monitorsApi';
 
 export default function Page() {
   const [monitors, setMonitors] = useState<Monitor[]>([]);
@@ -15,6 +15,9 @@ export default function Page() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  
+  const [checkingId, setCheckingId] = useState<string | null>(null);
+  const [histories, setHistories] = useState<Record<string, CheckResult[]>>({});
 
   const fetchMonitors = async () => {
     try {
@@ -22,6 +25,17 @@ export default function Page() {
       setError(null);
       const data = await monitorsApi.getAll();
       setMonitors(data);
+      
+      const newHistories: Record<string, CheckResult[]> = {};
+      await Promise.all(data.map(async (m) => {
+        try {
+          const checks = await monitorsApi.getChecks(m.id);
+          newHistories[m.id] = checks;
+        } catch (e) {
+          // Ignore
+        }
+      }));
+      setHistories(newHistories);
     } catch (err: any) {
       setError(err.message || 'Failed to load monitors');
     } finally {
@@ -54,6 +68,25 @@ export default function Page() {
       setMonitors(monitors.filter(m => m.id !== id));
     } catch (err: any) {
       alert(err.message || 'Failed to delete monitor');
+    }
+  };
+
+  const handleCheck = async (id: string) => {
+    try {
+      setCheckingId(id);
+      const updatedMonitor = await monitorsApi.check(id);
+      setMonitors(monitors.map(m => m.id === id ? updatedMonitor : m));
+      
+      try {
+        const checks = await monitorsApi.getChecks(id);
+        setHistories(prev => ({ ...prev, [id]: checks }));
+      } catch (e) {
+        // Ignore
+      }
+    } catch (err: any) {
+      alert(err.message || 'Lỗi khi kiểm tra website');
+    } finally {
+      setCheckingId(null);
     }
   };
 
@@ -176,22 +209,96 @@ export default function Page() {
                       <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#94a3b8' }}>
                         Kiểm tra mỗi {monitor.intervalSeconds} giây • Ngày tạo: {new Date(monitor.createdAt).toLocaleDateString()}
                       </div>
+
+                      {/* Check result info */}
+                      <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '0.5rem', border: '1px solid #e2e8f0', fontSize: '0.875rem' }}>
+                        <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
+                          <div>
+                            <strong>Trạng thái: </strong>
+                            {monitor.lastStatus === 'up' && <span style={{ color: '#16a34a' }}>Hoạt động</span>}
+                            {monitor.lastStatus === 'down' && <span style={{ color: '#dc2626' }}>Gặp lỗi</span>}
+                            {(!monitor.lastStatus || monitor.lastStatus === 'unknown') && <span style={{ color: '#64748b' }}>Chưa kiểm tra</span>}
+                          </div>
+                          {monitor.lastStatusCode !== undefined && (
+                            <div>
+                              <strong>Mã lỗi: </strong> {monitor.lastStatusCode}
+                            </div>
+                          )}
+                          {monitor.lastResponseTimeMs !== undefined && (
+                            <div>
+                              <strong>Phản hồi: </strong> {monitor.lastResponseTimeMs}ms
+                            </div>
+                          )}
+                        </div>
+                        {monitor.lastCheckedAt && (
+                          <div style={{ color: '#64748b', fontSize: '0.75rem', marginTop: '0.25rem' }}>
+                            Kiểm tra gần nhất: {new Date(monitor.lastCheckedAt).toLocaleString()}
+                          </div>
+                        )}
+                        {monitor.lastError && (
+                          <div style={{ color: '#dc2626', fontSize: '0.75rem', marginTop: '0.25rem' }}>
+                            <strong>Lỗi: </strong> {monitor.lastError}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* History Section */}
+                      {histories[monitor.id] && histories[monitor.id].length > 0 && (
+                        <div style={{ marginTop: '0.75rem' }}>
+                          <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.875rem', color: '#475569' }}>Lịch sử kiểm tra gần đây:</h4>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                            {histories[monitor.id].slice(0, 5).map(check => (
+                              <div key={check.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', padding: '0.5rem', backgroundColor: '#f8fafc', borderRadius: '0.25rem', border: '1px solid #e2e8f0' }}>
+                                <div style={{ display: 'flex', gap: '1rem' }}>
+                                  <span style={{ color: check.status === 'up' ? '#16a34a' : '#dc2626', fontWeight: 500 }}>
+                                    {check.status === 'up' ? 'Hoạt động' : 'Gặp lỗi'}
+                                  </span>
+                                  {check.statusCode && <span style={{ color: '#64748b' }}>Mã: {check.statusCode}</span>}
+                                  <span style={{ color: '#64748b' }}>{check.responseTimeMs}ms</span>
+                                </div>
+                                <span style={{ color: '#94a3b8' }}>
+                                  {new Date(check.checkedAt).toLocaleString()}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <button 
-                      onClick={() => handleDelete(monitor.id)}
-                      style={{ 
-                        padding: '0.5rem 1rem', 
-                        backgroundColor: '#fee2e2', 
-                        color: '#dc2626', 
-                        border: 'none', 
-                        borderRadius: '0.5rem', 
-                        fontWeight: 500, 
-                        cursor: 'pointer',
-                        fontSize: '0.875rem'
-                      }}
-                    >
-                      Xóa
-                    </button>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button 
+                        onClick={() => handleCheck(monitor.id)}
+                        disabled={checkingId === monitor.id}
+                        style={{ 
+                          padding: '0.5rem 1rem', 
+                          backgroundColor: checkingId === monitor.id ? '#93c5fd' : '#2563eb', 
+                          color: 'white', 
+                          border: 'none', 
+                          borderRadius: '0.5rem', 
+                          fontWeight: 500, 
+                          cursor: checkingId === monitor.id ? 'not-allowed' : 'pointer',
+                          fontSize: '0.875rem',
+                          transition: 'background-color 0.2s'
+                        }}
+                      >
+                        {checkingId === monitor.id ? 'Đang kiểm tra...' : 'Kiểm tra ngay'}
+                      </button>
+                      <button 
+                        onClick={() => handleDelete(monitor.id)}
+                        style={{ 
+                          padding: '0.5rem 1rem', 
+                          backgroundColor: '#fee2e2', 
+                          color: '#dc2626', 
+                          border: 'none', 
+                          borderRadius: '0.5rem', 
+                          fontWeight: 500, 
+                          cursor: 'pointer',
+                          fontSize: '0.875rem'
+                        }}
+                      >
+                        Xóa
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

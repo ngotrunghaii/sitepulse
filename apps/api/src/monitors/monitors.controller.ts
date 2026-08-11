@@ -39,4 +39,14 @@ export class MonitorsController {
   remove(@Param('id') id: string): void {
     this.monitorsService.remove(id);
   }
+
+  @Post(':id/check')
+  async check(@Param('id') id: string): Promise<Monitor> {
+    return this.monitorsService.checkMonitor(id);
+  }
+
+  @Get(':id/checks')
+  getChecks(@Param('id') id: string) {
+    return this.monitorsService.getCheckHistory(id);
+  }
 }

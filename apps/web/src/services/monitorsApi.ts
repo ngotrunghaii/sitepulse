@@ -5,6 +5,21 @@ export type Monitor = {
   intervalSeconds: number;
   isActive: boolean;
   createdAt: string;
+  lastStatus?: "up" | "down" | "unknown";
+  lastStatusCode?: number;
+  lastResponseTimeMs?: number;
+  lastCheckedAt?: string;
+  lastError?: string;
+};
+
+export type CheckResult = {
+  id: string;
+  monitorId: string;
+  status: "up" | "down";
+  statusCode?: number;
+  responseTimeMs: number;
+  checkedAt: string;
+  error?: string;
 };
 
 export type CreateMonitorDto = {
@@ -49,5 +64,26 @@ export const monitorsApi = {
     if (!res.ok) {
       throw new Error('Failed to delete monitor');
     }
+  },
+
+  async check(id: string): Promise<Monitor> {
+    const res = await fetch(`${API_URL}/monitors/${id}/check`, {
+      method: 'POST',
+    });
+    
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => null);
+      throw new Error(errorData?.message || 'Failed to check monitor');
+    }
+    
+    return res.json();
+  },
+
+  async getChecks(id: string): Promise<CheckResult[]> {
+    const res = await fetch(`${API_URL}/monitors/${id}/checks`);
+    if (!res.ok) {
+      throw new Error('Failed to fetch check history');
+    }
+    return res.json();
   }
 };
