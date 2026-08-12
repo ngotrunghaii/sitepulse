@@ -129,11 +129,16 @@ export class MonitorsService {
 
   async remove(id: string): Promise<void> {
     try {
-      await this.prisma.monitor.delete({
-        where: { id },
-      });
-    } catch (e) {
-      throw new NotFoundException(`Monitor with ID ${id} not found`);
+      await this.prisma.$transaction([
+        this.prisma.checkResult.deleteMany({ where: { monitorId: id } }),
+        this.prisma.incident.deleteMany({ where: { monitorId: id } }),
+        this.prisma.monitor.delete({ where: { id } }),
+      ]);
+    } catch (e: any) {
+      if (e.code === 'P2025') {
+        throw new NotFoundException(`Monitor with ID ${id} not found`);
+      }
+      throw e;
     }
   }
 
