@@ -15,24 +15,24 @@ export class MonitorsController {
   // ─── Incident routes (phải đặt trước :id để tránh route conflict) ────────
 
   @Get('incidents')
-  getAllIncidents(): Incident[] {
+  async getAllIncidents(): Promise<Incident[]> {
     return this.monitorsService.getIncidents();
   }
 
   // ─── Monitor CRUD ─────────────────────────────────────────────────────────
 
   @Get()
-  findAll(): Monitor[] {
+  async findAll(): Promise<Monitor[]> {
     return this.monitorsService.findAll();
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string): Monitor {
+  async findOne(@Param('id') id: string): Promise<Monitor> {
     return this.monitorsService.findOne(id);
   }
 
   @Post()
-  create(@Body() createMonitorDto: CreateMonitorDto): Monitor {
+  async create(@Body() createMonitorDto: CreateMonitorDto): Promise<Monitor> {
     if (!createMonitorDto.name || createMonitorDto.name.trim() === '') {
       throw new BadRequestException('name must not be empty');
     }
@@ -49,8 +49,8 @@ export class MonitorsController {
 
   @Delete(':id')
   @HttpCode(204)
-  remove(@Param('id') id: string): void {
-    this.monitorsService.remove(id);
+  async remove(@Param('id') id: string): Promise<void> {
+    await this.monitorsService.remove(id);
   }
 
   // ─── Check & History ──────────────────────────────────────────────────────
@@ -61,12 +61,12 @@ export class MonitorsController {
   }
 
   @Get(':id/checks')
-  getChecks(@Param('id') id: string) {
+  async getChecks(@Param('id') id: string) {
     return this.monitorsService.getCheckHistory(id);
   }
 
   @Get(':id/incidents')
-  getMonitorIncidents(@Param('id') id: string): Incident[] {
+  async getMonitorIncidents(@Param('id') id: string): Promise<Incident[]> {
     return this.monitorsService.getMonitorIncidents(id);
   }
 }

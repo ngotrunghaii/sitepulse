@@ -1,100 +1,189 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Monitor } from './types/monitor.type';
-import { CheckResult } from './types/check-result.type';
-import { Incident } from './types/incident.type';
+import { Monitor as MonitorDTO } from './types/monitor.type';
+import { CheckResult as CheckResultDTO } from './types/check-result.type';
+import { Incident as IncidentDTO } from './types/incident.type';
 import { CreateMonitorDto } from './dto/create-monitor.dto';
 import { validateMonitorUrl } from '../common/security/url-security';
+import { PrismaService } from '../prisma/prisma.service';
 
-const MAX_CHECK_RESULTS = 500;
-const MAX_INCIDENTS = 200;
 const CHECK_HISTORY_LIMIT = 50;
 const INCIDENTS_LIMIT = 50;
 
 @Injectable()
 export class MonitorsService {
-  private monitors: Monitor[] = [];
-  private checkResults: CheckResult[] = [];
-  private incidents: Incident[] = [];
+  constructor(private prisma: PrismaService) {}
+
+  // ─── Map Helpers ─────────────────────────────────────────────────────────
+
+  private mapMonitor(m: any): MonitorDTO {
+    // Determine lastStatus from the most recent check if not explicitly stored
+    let lastStatus: 'up' | 'down' | 'unknown' = 'unknown';
+    let lastStatusCode: number | undefined;
+    let lastResponseTimeMs: number | undefined;
+    let lastCheckedAt: string | undefined;
+    let lastError: string | undefined;
+
+    if (m.checks && m.checks.length > 0) {
+      const latestCheck = m.checks[0];
+      lastStatus = latestCheck.isUp ? 'up' : 'down';
+      lastStatusCode = latestCheck.statusCode ?? undefined;
+      lastResponseTimeMs = latestCheck.responseTime ?? undefined;
+      lastCheckedAt = latestCheck.checkedAt.toISOString();
+    }
+
+    // Determine if there is an open incident
+    const openIncident = m.incidents?.find((i: any) => i.resolvedAt === null);
+    if (openIncident) {
+      lastError = openIncident.description ?? undefined;
+    }
+
+    return {
+      id: m.id,
+      name: m.name,
+      url: m.url,
+      intervalSeconds: m.interval,
+      isActive: true, // We assume true as the schema doesn't have isActive
+      createdAt: m.createdAt.toISOString(),
+      lastStatus,
+      lastStatusCode,
+      lastResponseTimeMs,
+      lastCheckedAt,
+      lastError,
+    };
+  }
+
+  private mapCheckResult(cr: any): CheckResultDTO {
+    return {
+      id: cr.id,
+      monitorId: cr.monitorId,
+      status: cr.isUp ? 'up' : 'down',
+      statusCode: cr.statusCode ?? undefined,
+      responseTimeMs: cr.responseTime ?? 0,
+      checkedAt: cr.checkedAt.toISOString(),
+    };
+  }
+
+  private mapIncident(inc: any): IncidentDTO {
+    return {
+      id: inc.id,
+      monitorId: inc.monitorId,
+      status: inc.resolvedAt ? 'resolved' : 'open',
+      startedAt: inc.startedAt.toISOString(),
+      resolvedAt: inc.resolvedAt?.toISOString(),
+      reason: inc.description || 'Unknown error',
+    };
+  }
 
   // ─── Monitor CRUD ────────────────────────────────────────────────────────
 
-  findAll(): Monitor[] {
-    return this.monitors;
+  async findAll(): Promise<MonitorDTO[]> {
+    const monitors = await this.prisma.monitor.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        checks: {
+          orderBy: { checkedAt: 'desc' },
+          take: 1,
+        },
+        incidents: {
+          where: { resolvedAt: null },
+          take: 1,
+        },
+      },
+    });
+    return monitors.map((m) => this.mapMonitor(m));
   }
 
-  findOne(id: string): Monitor {
-    const monitor = this.monitors.find((m) => m.id === id);
+  async findOne(id: string): Promise<MonitorDTO> {
+    const monitor = await this.prisma.monitor.findUnique({
+      where: { id },
+      include: {
+        checks: {
+          orderBy: { checkedAt: 'desc' },
+          take: 1,
+        },
+        incidents: {
+          where: { resolvedAt: null },
+          take: 1,
+        },
+      },
+    });
+
     if (!monitor) {
       throw new NotFoundException(`Monitor with ID ${id} not found`);
     }
-    return monitor;
+
+    return this.mapMonitor(monitor);
   }
 
-  create(createMonitorDto: CreateMonitorDto): Monitor {
-    const newMonitor: Monitor = {
-      id: Math.random().toString(36).substring(2, 9),
-      name: createMonitorDto.name,
-      url: createMonitorDto.url,
-      intervalSeconds: createMonitorDto.intervalSeconds,
-      isActive: true,
-      createdAt: new Date().toISOString(),
-    };
-    this.monitors.push(newMonitor);
-    return newMonitor;
+  async create(createMonitorDto: CreateMonitorDto): Promise<MonitorDTO> {
+    const monitor = await this.prisma.monitor.create({
+      data: {
+        name: createMonitorDto.name,
+        url: createMonitorDto.url,
+        interval: createMonitorDto.intervalSeconds,
+        workspaceId: this.prisma.defaultWorkspaceId,
+      },
+    });
+    return this.mapMonitor(monitor);
   }
 
-  remove(id: string): void {
-    const index = this.monitors.findIndex((m) => m.id === id);
-    if (index === -1) {
+  async remove(id: string): Promise<void> {
+    try {
+      await this.prisma.monitor.delete({
+        where: { id },
+      });
+    } catch (e) {
       throw new NotFoundException(`Monitor with ID ${id} not found`);
     }
-    this.monitors.splice(index, 1);
   }
 
   // ─── Check History ───────────────────────────────────────────────────────
 
-  getCheckHistory(monitorId: string): CheckResult[] {
-    this.findOne(monitorId);
-    return this.checkResults
-      .filter((cr) => cr.monitorId === monitorId)
-      .sort((a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime())
-      .slice(0, CHECK_HISTORY_LIMIT);
+  async getCheckHistory(monitorId: string): Promise<CheckResultDTO[]> {
+    const checks = await this.prisma.checkResult.findMany({
+      where: { monitorId },
+      orderBy: { checkedAt: 'desc' },
+      take: CHECK_HISTORY_LIMIT,
+    });
+    return checks.map(this.mapCheckResult);
   }
 
   // ─── Incident Queries ────────────────────────────────────────────────────
 
-  getIncidents(): Incident[] {
-    return this.incidents
-      .slice()
-      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
-      .slice(0, INCIDENTS_LIMIT);
+  async getIncidents(): Promise<IncidentDTO[]> {
+    const incidents = await this.prisma.incident.findMany({
+      orderBy: { startedAt: 'desc' },
+      take: INCIDENTS_LIMIT,
+    });
+    return incidents.map(this.mapIncident);
   }
 
-  getMonitorIncidents(monitorId: string): Incident[] {
-    this.findOne(monitorId);
-    return this.incidents
-      .filter((i) => i.monitorId === monitorId)
-      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
-      .slice(0, INCIDENTS_LIMIT);
+  async getMonitorIncidents(monitorId: string): Promise<IncidentDTO[]> {
+    const incidents = await this.prisma.incident.findMany({
+      where: { monitorId },
+      orderBy: { startedAt: 'desc' },
+      take: INCIDENTS_LIMIT,
+    });
+    return incidents.map(this.mapIncident);
   }
 
   // ─── Core Check Logic ────────────────────────────────────────────────────
 
-  /**
-   * Thực hiện HTTP check cho monitor, lưu kết quả và cập nhật incident.
-   * Entry point cho cả thủ công lẫn scheduler.
-   */
-  async checkMonitorNow(id: string): Promise<Monitor> {
-    const monitor = this.findOne(id);
+  async checkMonitorNow(id: string): Promise<MonitorDTO> {
+    const monitor = await this.prisma.monitor.findUnique({
+      where: { id },
+    });
 
-    // Kiểm tra SSRF lần 2 — bảo vệ trường hợp URL bị bypass hoặc thay đổi trực tiếp
+    if (!monitor) {
+      throw new NotFoundException(`Monitor with ID ${id} not found`);
+    }
+
     validateMonitorUrl(monitor.url);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
 
     const startTime = Date.now();
-    const checkedAt = new Date().toISOString();
 
     let newStatus: 'up' | 'down';
     let statusCode: number | undefined;
@@ -124,116 +213,93 @@ export class MonitorsService {
       clearTimeout(timeout);
     }
 
-    // Cập nhật monitor state
-    monitor.lastCheckedAt = checkedAt;
-    monitor.lastStatus = newStatus;
-    monitor.lastStatusCode = statusCode;
-    monitor.lastResponseTimeMs = responseTimeMs!;
-    monitor.lastError = newStatus === 'down' ? errorMsg : undefined;
+    await this.recordCheckResult(monitor.id, newStatus, statusCode, responseTimeMs);
+    await this.updateIncidentState(monitor.id, newStatus, statusCode, errorMsg);
 
-    this.recordCheckResult(monitor, newStatus, statusCode, responseTimeMs!, checkedAt, errorMsg);
-    this.updateIncidentState(monitor, newStatus, statusCode, errorMsg);
-
-    return monitor;
+    return this.findOne(monitor.id);
   }
 
-  /**
-   * Lưu kết quả check vào checkResults[].
-   * Giới hạn tổng cộng MAX_CHECK_RESULTS records.
-   */
-  private recordCheckResult(
-    monitor: Monitor,
+  private async recordCheckResult(
+    monitorId: string,
     status: 'up' | 'down',
     statusCode: number | undefined,
     responseTimeMs: number,
-    checkedAt: string,
-    error: string | undefined,
-  ): void {
-    const result: CheckResult = {
-      id: Math.random().toString(36).substring(2, 9),
-      monitorId: monitor.id,
-      status,
-      statusCode,
-      responseTimeMs,
-      checkedAt,
-      error,
-    };
-    this.checkResults.push(result);
+  ): Promise<void> {
+    await this.prisma.checkResult.create({
+      data: {
+        monitorId,
+        isUp: status === 'up',
+        statusCode,
+        responseTime: responseTimeMs,
+      },
+    });
 
-    // Trim để giữ in-memory hợp lý
-    if (this.checkResults.length > MAX_CHECK_RESULTS) {
-      this.checkResults.splice(0, this.checkResults.length - MAX_CHECK_RESULTS);
+    // Cleanup old checks to prevent infinite growth
+    const totalChecks = await this.prisma.checkResult.count({ where: { monitorId } });
+    if (totalChecks > 500) {
+      const oldChecks = await this.prisma.checkResult.findMany({
+        where: { monitorId },
+        orderBy: { checkedAt: 'desc' },
+        skip: 500,
+        select: { id: true },
+      });
+      const idsToDelete = oldChecks.map((c) => c.id);
+      await this.prisma.checkResult.deleteMany({
+        where: { id: { in: idsToDelete } },
+      });
     }
   }
 
-  /**
-   * Cập nhật trạng thái incident theo kết quả check:
-   * - up/unknown → down: tạo incident mới (open)
-   * - down đang mở → down: không tạo thêm
-   * - down → up: resolve incident open mới nhất
-   * - up → up: không làm gì
-   */
-  private updateIncidentState(
-    monitor: Monitor,
+  private async updateIncidentState(
+    monitorId: string,
     newStatus: 'up' | 'down',
     lastStatusCode: number | undefined,
     lastError: string | undefined,
-  ): void {
-    const prevStatus = monitor.lastStatus; // đã được set bên trên, lấy từ history
+  ): Promise<void> {
+    const existingOpen = await this.prisma.incident.findFirst({
+      where: { monitorId, resolvedAt: null },
+      orderBy: { startedAt: 'desc' },
+    });
 
     if (newStatus === 'down') {
-      // Kiểm tra đã có incident open chưa
-      const existingOpen = this.incidents.find(
-        (i) => i.monitorId === monitor.id && i.status === 'open',
-      );
       if (!existingOpen) {
-        const incident: Incident = {
-          id: Math.random().toString(36).substring(2, 9),
-          monitorId: monitor.id,
-          status: 'open',
-          startedAt: new Date().toISOString(),
-          reason: lastError || `HTTP Status: ${lastStatusCode ?? 'Unknown'}`,
-          lastStatusCode,
-          lastError,
-        };
-        this.incidents.push(incident);
-
-        // Trim
-        if (this.incidents.length > MAX_INCIDENTS) {
-          this.incidents.splice(0, this.incidents.length - MAX_INCIDENTS);
-        }
+        await this.prisma.incident.create({
+          data: {
+            monitorId,
+            description: lastError || `HTTP Status: ${lastStatusCode ?? 'Unknown'}`,
+          },
+        });
       }
     } else if (newStatus === 'up') {
-      // Resolve incident open mới nhất (nếu có)
-      const openIncidents = this.incidents
-        .filter((i) => i.monitorId === monitor.id && i.status === 'open')
-        .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
-
-      if (openIncidents.length > 0) {
-        openIncidents[0].status = 'resolved';
-        openIncidents[0].resolvedAt = new Date().toISOString();
+      if (existingOpen) {
+        await this.prisma.incident.update({
+          where: { id: existingOpen.id },
+          data: {
+            resolvedAt: new Date(),
+          },
+        });
       }
     }
   }
 
-  // ─── Scheduler Hook ──────────────────────────────────────────────────────
-
-  /**
-   * Quét tất cả monitors active và check nếu đến lịch.
-   * Được gọi bởi MonitorsScheduler mỗi 10 giây.
-   */
   async runDueChecks(): Promise<void> {
+    // Get all monitors, with their latest check result
+    const monitors = await this.prisma.monitor.findMany({
+      include: {
+        checks: {
+          orderBy: { checkedAt: 'desc' },
+          take: 1,
+        },
+      },
+    });
+    
     const now = Date.now();
-    const activeMonitors = this.monitors.filter((m) => m.isActive);
 
-    for (const monitor of activeMonitors) {
-      const lastChecked = monitor.lastCheckedAt
-        ? new Date(monitor.lastCheckedAt).getTime()
-        : 0;
-      const elapsedSeconds = (now - lastChecked) / 1000;
+    for (const monitor of monitors) {
+      const lastCheckedAt = monitor.checks.length > 0 ? monitor.checks[0].checkedAt.getTime() : 0;
+      const elapsedSeconds = (now - lastCheckedAt) / 1000;
 
-      if (elapsedSeconds >= monitor.intervalSeconds) {
-        // Fire-and-forget per monitor — lỗi không crash scheduler
+      if (elapsedSeconds >= monitor.interval) {
         this.checkMonitorNow(monitor.id).catch((err) => {
           console.error(`[Scheduler] Error checking monitor ${monitor.id} (${monitor.url}):`, err?.message ?? err);
         });
