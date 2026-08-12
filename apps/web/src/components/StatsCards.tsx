@@ -3,9 +3,16 @@ type Stats = {
   up: number;
   down: number;
   avgMs: number | null;
+  openIncidents: number;
 };
 
-function StatCard({ label, value, accent }: { label: string; value: string | number; accent?: string }) {
+function StatCard({
+  label, value, accent,
+}: {
+  label: string;
+  value: string | number;
+  accent?: string;
+}) {
   return (
     <div style={{
       backgroundColor: '#fff', border: '1px solid #e5e7eb',
@@ -29,13 +36,20 @@ type StatsCardsProps = { stats: Stats };
 export default function StatsCards({ stats }: StatsCardsProps) {
   return (
     <div className="sp-stats-grid" style={{
-      display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
-      gap: '1rem', marginBottom: '1.75rem',
+      display: 'grid',
+      gridTemplateColumns: 'repeat(5, 1fr)',
+      gap: '1rem',
+      marginBottom: '1.75rem',
     }}>
       <StatCard label="Tổng website" value={stats.total} />
       <StatCard label="Đang hoạt động" value={stats.up} accent="#15803d" />
       <StatCard label="Gặp lỗi" value={stats.down} accent={stats.down > 0 ? '#dc2626' : '#0f172a'} />
       <StatCard label="Phản hồi TB" value={stats.avgMs !== null ? `${stats.avgMs} ms` : '—'} />
+      <StatCard
+        label="Sự cố đang mở"
+        value={stats.openIncidents}
+        accent={stats.openIncidents > 0 ? '#b45309' : '#0f172a'}
+      />
     </div>
   );
 }

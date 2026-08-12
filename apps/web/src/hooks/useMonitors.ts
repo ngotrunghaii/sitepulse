@@ -1,14 +1,16 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Monitor, CheckResult, CreateMonitorDto } from '@/types/monitor';
+import { Monitor, CheckResult, Incident, CreateMonitorDto } from '@/types/monitor';
 import { monitorsApi } from '@/services/monitorsApi';
 
 export type UseMonitorsReturn = {
   // Data
   monitors: Monitor[];
   histories: Record<string, CheckResult[]>;
-  stats: { total: number; up: number; down: number; avgMs: number | null };
+  incidents: Incident[];
+  openIncidentsByMonitor: Record<string, Incident>;
+  stats: { total: number; up: number; down: number; avgMs: number | null; openIncidents: number };
   // Loading / error states
   loading: boolean;
   error: string | null;
@@ -32,6 +34,7 @@ const EMPTY_FORM: CreateMonitorDto = { name: '', url: '', intervalSeconds: 60 };
 export function useMonitors(): UseMonitorsReturn {
   const [monitors, setMonitors] = useState<Monitor[]>([]);
   const [histories, setHistories] = useState<Record<string, CheckResult[]>>({});
+  const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [checkingId, setCheckingId] = useState<string | null>(null);
@@ -41,6 +44,18 @@ export function useMonitors(): UseMonitorsReturn {
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState(false);
 
+  // Map monitorId → incident open mới nhất (nếu có)
+  const openIncidentsByMonitor = useMemo<Record<string, Incident>>(() => {
+    const map: Record<string, Incident> = {};
+    // incidents đã sort mới nhất trước từ API
+    for (const inc of incidents) {
+      if (inc.status === 'open' && !map[inc.monitorId]) {
+        map[inc.monitorId] = inc;
+      }
+    }
+    return map;
+  }, [incidents]);
+
   const stats = useMemo(() => {
     const up = monitors.filter((m) => m.lastStatus === 'up').length;
     const down = monitors.filter((m) => m.lastStatus === 'down').length;
@@ -48,8 +63,9 @@ export function useMonitors(): UseMonitorsReturn {
     const avgMs = checked.length
       ? Math.round(checked.reduce((s, m) => s + (m.lastResponseTimeMs ?? 0), 0) / checked.length)
       : null;
-    return { total: monitors.length, up, down, avgMs };
-  }, [monitors]);
+    const openIncidents = Object.keys(openIncidentsByMonitor).length;
+    return { total: monitors.length, up, down, avgMs, openIncidents };
+  }, [monitors, openIncidentsByMonitor]);
 
   const fetchHistories = useCallback(async (data: Monitor[]) => {
     const result: Record<string, CheckResult[]> = {};
@@ -58,9 +74,16 @@ export function useMonitors(): UseMonitorsReturn {
         try {
           result[m.id] = await monitorsApi.getChecks(m.id);
         } catch { /* ignore */ }
-      })
+      }),
     );
     setHistories(result);
+  }, []);
+
+  const fetchIncidents = useCallback(async () => {
+    try {
+      const data = await monitorsApi.getIncidents();
+      setIncidents(data);
+    } catch { /* ignore — không block UI nếu incident API lỗi */ }
   }, []);
 
   const fetchAll = useCallback(async () => {
@@ -69,15 +92,21 @@ export function useMonitors(): UseMonitorsReturn {
       setError(null);
       const data = await monitorsApi.getAll();
       setMonitors(data);
-      await fetchHistories(data);
+      await Promise.all([fetchHistories(data), fetchIncidents()]);
     } catch (err: any) {
       setError(err.message || 'Không thể tải danh sách website.');
     } finally {
       setLoading(false);
     }
-  }, [fetchHistories]);
+  }, [fetchHistories, fetchIncidents]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Auto-refresh mỗi 15s để cập nhật kết quả scheduler
+  useEffect(() => {
+    const id = setInterval(fetchAll, 15_000);
+    return () => clearInterval(id);
+  }, [fetchAll]);
 
   const clearFormFeedback = useCallback(() => {
     setFormError(null);
@@ -111,29 +140,34 @@ export function useMonitors(): UseMonitorsReturn {
         delete next[id];
         return next;
       });
+      // Refresh incidents vì monitor bị xóa
+      fetchIncidents();
     } catch (err: any) {
       alert(err.message || 'Không thể xóa website.');
     }
-  }, []);
+  }, [fetchIncidents]);
 
   const handleCheck = useCallback(async (id: string) => {
     try {
       setCheckingId(id);
       const updated = await monitorsApi.check(id);
       setMonitors((prev) => prev.map((m) => (m.id === id ? updated : m)));
-      try {
-        const checks = await monitorsApi.getChecks(id);
-        setHistories((prev) => ({ ...prev, [id]: checks }));
-      } catch { /* ignore */ }
+      // Refresh cả checks lẫn incidents sau khi check thủ công
+      await Promise.all([
+        monitorsApi.getChecks(id).then((checks) =>
+          setHistories((prev) => ({ ...prev, [id]: checks })),
+        ).catch(() => {}),
+        fetchIncidents(),
+      ]);
     } catch (err: any) {
       alert(err.message || 'Lỗi khi kiểm tra website.');
     } finally {
       setCheckingId(null);
     }
-  }, []);
+  }, [fetchIncidents]);
 
   return {
-    monitors, histories, stats,
+    monitors, histories, incidents, openIncidentsByMonitor, stats,
     loading, error, checkingId,
     formData, submitting, formError, formSuccess,
     fetchAll, setFormData, clearFormFeedback,

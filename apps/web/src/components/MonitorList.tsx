@@ -1,10 +1,11 @@
-import { Monitor, CheckResult } from '@/types/monitor';
+import { Monitor, CheckResult, Incident } from '@/types/monitor';
 import MonitorCard from './MonitorCard';
 import EmptyState from './EmptyState';
 
 type MonitorListProps = {
   monitors: Monitor[];
   histories: Record<string, CheckResult[]>;
+  openIncidentsByMonitor: Record<string, Incident>;
   loading: boolean;
   error: string | null;
   checkingId: string | null;
@@ -13,7 +14,7 @@ type MonitorListProps = {
 };
 
 export default function MonitorList({
-  monitors, histories, loading, error, checkingId, onCheck, onDelete,
+  monitors, histories, openIncidentsByMonitor, loading, error, checkingId, onCheck, onDelete,
 }: MonitorListProps) {
   return (
     <section style={{
@@ -57,6 +58,7 @@ export default function MonitorList({
               key={monitor.id}
               monitor={monitor}
               history={histories[monitor.id] ?? []}
+              openIncident={openIncidentsByMonitor[monitor.id]}
               isChecking={checkingId === monitor.id}
               onCheck={() => onCheck(monitor.id)}
               onDelete={() => onDelete(monitor.id)}

@@ -5,10 +5,11 @@ import DashboardHeader from '@/components/DashboardHeader';
 import StatsCards from '@/components/StatsCards';
 import AddMonitorForm from '@/components/AddMonitorForm';
 import MonitorList from '@/components/MonitorList';
+import IncidentPanel from '@/components/IncidentPanel';
 
 export default function Page() {
   const {
-    monitors, histories, stats,
+    monitors, histories, incidents, openIncidentsByMonitor, stats,
     loading, error, checkingId,
     formData, submitting, formError, formSuccess,
     fetchAll, setFormData, clearFormFeedback,
@@ -39,15 +40,20 @@ export default function Page() {
             onSubmit={handleSubmit}
           />
 
-          <MonitorList
-            monitors={monitors}
-            histories={histories}
-            loading={loading}
-            error={error}
-            checkingId={checkingId}
-            onCheck={handleCheck}
-            onDelete={handleDelete}
-          />
+          <div>
+            <MonitorList
+              monitors={monitors}
+              histories={histories}
+              openIncidentsByMonitor={openIncidentsByMonitor}
+              loading={loading}
+              error={error}
+              checkingId={checkingId}
+              onCheck={handleCheck}
+              onDelete={handleDelete}
+            />
+
+            <IncidentPanel incidents={incidents} monitors={monitors} />
+          </div>
         </div>
 
       </div>

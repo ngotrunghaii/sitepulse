@@ -1,4 +1,4 @@
-import { Monitor, CheckResult } from '@/types/monitor';
+import { Monitor, CheckResult, Incident } from '@/types/monitor';
 import { formatDate, formatDateTime } from '@/utils/formatters';
 import StatusBadge from './StatusBadge';
 import CheckHistoryTable from './CheckHistoryTable';
@@ -7,12 +7,13 @@ type MonitorCardProps = {
   monitor: Monitor;
   history: CheckResult[];
   isChecking: boolean;
+  openIncident?: Incident;
   onCheck: () => void;
   onDelete: () => void;
 };
 
 export default function MonitorCard({
-  monitor, history, isChecking, onCheck, onDelete,
+  monitor, history, isChecking, openIncident, onCheck, onDelete,
 }: MonitorCardProps) {
   const recent = history.slice(0, 3);
 
@@ -109,8 +110,24 @@ export default function MonitorCard({
         </div>
       </div>
 
+      {/* ── Incident banner ── */}
+      {openIncident && (
+        <div style={{
+          marginTop: '0.75rem', padding: '0.5rem 0.75rem', borderRadius: '6px',
+          backgroundColor: '#fffbeb', border: '1px solid #fde68a',
+          fontSize: '0.8125rem', color: '#92400e',
+          display: 'flex', alignItems: 'center', gap: '0.375rem',
+        }}>
+          <span>⚠</span>
+          <span>
+            <strong>Sự cố đang mở</strong> từ {formatDateTime(openIncident.startedAt)}
+            {openIncident.reason ? ` — ${openIncident.reason}` : ''}
+          </span>
+        </div>
+      )}
+
       {/* ── Error banner ── */}
-      {monitor.lastError && (
+      {monitor.lastError && !openIncident && (
         <div style={{
           marginTop: '0.75rem', padding: '0.5rem 0.75rem', borderRadius: '6px',
           backgroundColor: '#fef2f2', border: '1px solid #fecaca',

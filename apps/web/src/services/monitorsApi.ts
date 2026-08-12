@@ -1,4 +1,4 @@
-import { Monitor, CheckResult, CreateMonitorDto } from '@/types/monitor';
+import { Monitor, CheckResult, Incident, CreateMonitorDto } from '@/types/monitor';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -38,5 +38,15 @@ export const monitorsApi = {
   async getChecks(id: string): Promise<CheckResult[]> {
     const res = await fetch(`${API_URL}/monitors/${id}/checks`);
     return handleResponse<CheckResult[]>(res);
+  },
+
+  async getIncidents(): Promise<Incident[]> {
+    const res = await fetch(`${API_URL}/monitors/incidents`);
+    return handleResponse<Incident[]>(res);
+  },
+
+  async getMonitorIncidents(id: string): Promise<Incident[]> {
+    const res = await fetch(`${API_URL}/monitors/${id}/incidents`);
+    return handleResponse<Incident[]>(res);
   },
 };
