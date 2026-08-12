@@ -76,8 +76,9 @@ export class MonitorsService {
 
   // ─── Monitor CRUD ────────────────────────────────────────────────────────
 
-  async findAll(): Promise<MonitorDTO[]> {
+  async findAll(userId: string): Promise<MonitorDTO[]> {
     const monitors = await this.prisma.monitor.findMany({
+      where: { userId },
       orderBy: { createdAt: 'desc' },
       include: {
         checks: {
@@ -93,9 +94,9 @@ export class MonitorsService {
     return monitors.map((m) => this.mapMonitor(m));
   }
 
-  async findOne(id: string): Promise<MonitorDTO> {
-    const monitor = await this.prisma.monitor.findUnique({
-      where: { id },
+  async findOne(id: string, userId?: string): Promise<MonitorDTO> {
+    const monitor = await this.prisma.monitor.findFirst({
+      where: userId ? { id, userId } : { id },
       include: {
         checks: {
           orderBy: { checkedAt: 'desc' },
@@ -115,19 +116,23 @@ export class MonitorsService {
     return this.mapMonitor(monitor);
   }
 
-  async create(createMonitorDto: CreateMonitorDto): Promise<MonitorDTO> {
+  async create(createMonitorDto: CreateMonitorDto, userId: string): Promise<MonitorDTO> {
     const monitor = await this.prisma.monitor.create({
       data: {
         name: createMonitorDto.name,
         url: createMonitorDto.url,
         interval: createMonitorDto.intervalSeconds,
         workspaceId: this.prisma.defaultWorkspaceId,
+        userId,
       },
     });
     return this.mapMonitor(monitor);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string, userId: string): Promise<void> {
+    const monitor = await this.prisma.monitor.findFirst({ where: { id, userId } });
+    if (!monitor) throw new NotFoundException(`Monitor with ID ${id} not found`);
+    
     try {
       await this.prisma.$transaction([
         this.prisma.checkResult.deleteMany({ where: { monitorId: id } }),
@@ -144,7 +149,10 @@ export class MonitorsService {
 
   // ─── Check History ───────────────────────────────────────────────────────
 
-  async getCheckHistory(monitorId: string): Promise<CheckResultDTO[]> {
+  async getCheckHistory(monitorId: string, userId: string): Promise<CheckResultDTO[]> {
+    const monitor = await this.prisma.monitor.findFirst({ where: { id: monitorId, userId } });
+    if (!monitor) throw new NotFoundException(`Monitor with ID ${monitorId} not found`);
+
     const checks = await this.prisma.checkResult.findMany({
       where: { monitorId },
       orderBy: { checkedAt: 'desc' },
@@ -155,15 +163,19 @@ export class MonitorsService {
 
   // ─── Incident Queries ────────────────────────────────────────────────────
 
-  async getIncidents(): Promise<IncidentDTO[]> {
+  async getIncidents(userId: string): Promise<IncidentDTO[]> {
     const incidents = await this.prisma.incident.findMany({
+      where: { monitor: { userId } },
       orderBy: { startedAt: 'desc' },
       take: INCIDENTS_LIMIT,
     });
     return incidents.map(this.mapIncident);
   }
 
-  async getMonitorIncidents(monitorId: string): Promise<IncidentDTO[]> {
+  async getMonitorIncidents(monitorId: string, userId: string): Promise<IncidentDTO[]> {
+    const monitor = await this.prisma.monitor.findFirst({ where: { id: monitorId, userId } });
+    if (!monitor) throw new NotFoundException(`Monitor with ID ${monitorId} not found`);
+
     const incidents = await this.prisma.incident.findMany({
       where: { monitorId },
       orderBy: { startedAt: 'desc' },
@@ -174,9 +186,9 @@ export class MonitorsService {
 
   // ─── Core Check Logic ────────────────────────────────────────────────────
 
-  async checkMonitorNow(id: string): Promise<MonitorDTO> {
-    const monitor = await this.prisma.monitor.findUnique({
-      where: { id },
+  async checkMonitorNow(id: string, userId?: string): Promise<MonitorDTO> {
+    const monitor = await this.prisma.monitor.findFirst({
+      where: userId ? { id, userId } : { id },
     });
 
     if (!monitor) {
