@@ -6,6 +6,7 @@ import { MonitorsService } from './monitors.service';
 import { CreateMonitorDto } from './dto/create-monitor.dto';
 import { Monitor } from './types/monitor.type';
 import { Incident } from './types/incident.type';
+import { validateMonitorUrl } from '../common/security/url-security';
 
 @Controller('monitors')
 export class MonitorsController {
@@ -36,12 +37,8 @@ export class MonitorsController {
       throw new BadRequestException('name must not be empty');
     }
 
-    if (
-      !createMonitorDto.url ||
-      (!createMonitorDto.url.startsWith('http://') && !createMonitorDto.url.startsWith('https://'))
-    ) {
-      throw new BadRequestException('url must start with http:// or https://');
-    }
+    // validateMonitorUrl kiểm tra protocol, SSRF, credentials — ném BadRequestException nếu không hợp lệ
+    validateMonitorUrl(createMonitorDto.url ?? '');
 
     if (createMonitorDto.intervalSeconds === undefined || createMonitorDto.intervalSeconds < 60) {
       throw new BadRequestException('intervalSeconds must be at least 60');

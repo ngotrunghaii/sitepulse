@@ -3,6 +3,7 @@ import { Monitor } from './types/monitor.type';
 import { CheckResult } from './types/check-result.type';
 import { Incident } from './types/incident.type';
 import { CreateMonitorDto } from './dto/create-monitor.dto';
+import { validateMonitorUrl } from '../common/security/url-security';
 
 const MAX_CHECK_RESULTS = 500;
 const MAX_INCIDENTS = 200;
@@ -85,6 +86,9 @@ export class MonitorsService {
    */
   async checkMonitorNow(id: string): Promise<Monitor> {
     const monitor = this.findOne(id);
+
+    // Kiểm tra SSRF lần 2 — bảo vệ trường hợp URL bị bypass hoặc thay đổi trực tiếp
+    validateMonitorUrl(monitor.url);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
