@@ -73,4 +73,18 @@ export const monitorsApi = {
     const res = await fetch(`${API_URL}/monitors/${id}/incidents`, { headers: getAuthHeaders() });
     return handleResponse<Incident[]>(res);
   },
+
+  async getAlertRule(id: string): Promise<any> {
+    const res = await fetch(`${API_URL}/monitors/${id}/alert-rule`, { headers: getAuthHeaders() });
+    return handleResponse<any>(res);
+  },
+
+  async updateAlertRule(id: string, data: any): Promise<any> {
+    const res = await fetch(`${API_URL}/monitors/${id}/alert-rule`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    return handleResponse<any>(res);
+  },
 };

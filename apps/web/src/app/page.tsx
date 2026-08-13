@@ -9,6 +9,7 @@ import StatsCards from '@/components/StatsCards';
 import AddMonitorModal from '@/components/AddMonitorModal';
 import MonitorTable from '@/components/MonitorTable';
 import IncidentPanel from '@/components/IncidentPanel';
+import AlertSettingsModal from '@/components/AlertSettingsModal';
 
 export default function Page() {
   const {
@@ -23,6 +24,9 @@ export default function Page() {
   const [isClient, setIsClient] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  
+  const [alertModalMonitor, setAlertModalMonitor] = useState<{ id: string; name: string } | null>(null);
+
   const [user, setUser] = useState<{ email: string; name?: string | null } | null>(null);
 
   useEffect(() => {
@@ -75,6 +79,15 @@ export default function Page() {
         onSubmit={handleFormSubmit}
       />
 
+      {alertModalMonitor && (
+        <AlertSettingsModal
+          isOpen={true}
+          onClose={() => setAlertModalMonitor(null)}
+          monitorId={alertModalMonitor.id}
+          monitorName={alertModalMonitor.name}
+        />
+      )}
+
       {/* ── Tổng quan ── */}
       {activeTab === 'overview' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -110,6 +123,7 @@ export default function Page() {
                   checkingId={checkingId}
                   onCheck={handleCheck}
                   onDelete={handleDelete}
+                  onAlertConfig={(id, name) => setAlertModalMonitor({ id, name })}
                 />
               </section>
 
@@ -139,6 +153,7 @@ export default function Page() {
             checkingId={checkingId}
             onCheck={handleCheck}
             onDelete={handleDelete}
+            onAlertConfig={(id, name) => setAlertModalMonitor({ id, name })}
           />
         </div>
       )}

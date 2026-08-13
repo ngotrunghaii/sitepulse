@@ -3,9 +3,10 @@ import { AppController } from './app.controller';
 import { MonitorsModule } from './monitors/monitors.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
+import { AlertRulesModule } from './alert-rules/alert-rules.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, MonitorsModule],
+  imports: [PrismaModule, AuthModule, MonitorsModule, AlertRulesModule],
   controllers: [AppController],
   providers: [],
 })

@@ -14,10 +14,11 @@ type MonitorTableProps = {
   checkingId: string | null;
   onCheck: (id: string) => void;
   onDelete: (id: string) => void;
+  onAlertConfig: (id: string, name: string) => void;
 };
 
 export default function MonitorTable({
-  monitors, histories, openIncidentsByMonitor, loading, error, checkingId, onCheck, onDelete,
+  monitors, histories, openIncidentsByMonitor, loading, error, checkingId, onCheck, onDelete, onAlertConfig,
 }: MonitorTableProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'up' | 'down'>('all');
@@ -152,6 +153,13 @@ export default function MonitorTable({
                             style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
                           >
                             {checkingId === monitor.id ? 'Đang...' : 'Kiểm tra'}
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onAlertConfig(monitor.id, monitor.name); }}
+                            className="sp-btn sp-btn-outline"
+                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                          >
+                            Cảnh báo
                           </button>
                           <button
                             onClick={(e) => { e.stopPropagation(); onDelete(monitor.id); }}

@@ -17,6 +17,7 @@ model User {
   updatedAt DateTime    @updatedAt
   workspaces Workspace[]
   monitors   Monitor[]
+  alertRules AlertRule[]
 }
 
 model Workspace {
@@ -40,6 +41,7 @@ model Monitor {
   user        User          @relation(fields: [userId], references: [id])
   checks      CheckResult[]
   incidents   Incident[]
+  alertRule   AlertRule?
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 }
@@ -55,10 +57,26 @@ model CheckResult {
 }
 
 model Incident {
-  id          String    @id @default(cuid())
-  monitorId   String
-  monitor     Monitor   @relation(fields: [monitorId], references: [id])
-  startedAt   DateTime  @default(now())
-  resolvedAt  DateTime?
-  description String?
+  id                 String    @id @default(cuid())
+  monitorId          String
+  monitor            Monitor   @relation(fields: [monitorId], references: [id])
+  startedAt          DateTime  @default(now())
+  resolvedAt         DateTime?
+  description        String?
+  notifiedAt         DateTime?
+  resolvedNotifiedAt DateTime?
+}
+
+model AlertRule {
+  id               String   @id @default(cuid())
+  monitorId        String   @unique
+  monitor          Monitor  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enabled          Boolean  @default(true)
+  email            String?
+  failureThreshold Int      @default(1)
+  notifyOnRecovery Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }

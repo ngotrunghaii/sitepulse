@@ -278,23 +278,60 @@ export class MonitorsService {
       orderBy: { startedAt: 'desc' },
     });
 
+    let currentIncident = existingOpen;
+
     if (newStatus === 'down') {
-      if (!existingOpen) {
-        await this.prisma.incident.create({
+      if (!currentIncident) {
+        currentIncident = await this.prisma.incident.create({
           data: {
             monitorId,
             description: lastError || `HTTP Status: ${lastStatusCode ?? 'Unknown'}`,
           },
         });
       }
-    } else if (newStatus === 'up') {
-      if (existingOpen) {
-        await this.prisma.incident.update({
-          where: { id: existingOpen.id },
-          data: {
-            resolvedAt: new Date(),
-          },
+
+      if (!currentIncident.notifiedAt) {
+        const alertRule = await this.prisma.alertRule.findUnique({
+          where: { monitorId },
         });
+
+        if (alertRule?.enabled && alertRule.email) {
+          const recentChecks = await this.prisma.checkResult.findMany({
+            where: { monitorId },
+            orderBy: { checkedAt: 'desc' },
+            take: alertRule.failureThreshold,
+          });
+
+          if (
+            recentChecks.length >= alertRule.failureThreshold &&
+            recentChecks.every(c => !c.isUp)
+          ) {
+            currentIncident = await this.prisma.incident.update({
+              where: { id: currentIncident.id },
+              data: { notifiedAt: new Date() },
+            });
+            // Future: enqueue email job here
+          }
+        }
+      }
+    } else if (newStatus === 'up') {
+      if (currentIncident) {
+        const updateData: any = { resolvedAt: new Date() };
+
+        if (currentIncident.notifiedAt && !currentIncident.resolvedNotifiedAt) {
+          const alertRule = await this.prisma.alertRule.findUnique({
+            where: { monitorId },
+          });
+          if (alertRule?.notifyOnRecovery && alertRule.email) {
+            updateData.resolvedNotifiedAt = new Date();
+          }
+        }
+
+        await this.prisma.incident.update({
+          where: { id: currentIncident.id },
+          data: updateData,
+        });
+        // Future: enqueue recovery email job here
       }
     }
   }
