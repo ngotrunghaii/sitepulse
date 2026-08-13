@@ -5,13 +5,17 @@ import { Incident as IncidentDTO } from './types/incident.type';
 import { CreateMonitorDto } from './dto/create-monitor.dto';
 import { validateMonitorUrl } from '../common/security/url-security';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 const CHECK_HISTORY_LIMIT = 50;
 const INCIDENTS_LIMIT = 50;
 
 @Injectable()
 export class MonitorsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   // ─── Map Helpers ─────────────────────────────────────────────────────────
 
@@ -231,7 +235,7 @@ export class MonitorsService {
     }
 
     await this.recordCheckResult(monitor.id, newStatus, statusCode, responseTimeMs);
-    await this.updateIncidentState(monitor.id, newStatus, statusCode, errorMsg);
+    await this.updateIncidentState(monitor.id, monitor.name, monitor.userId, newStatus, statusCode, errorMsg);
 
     return this.findOne(monitor.id);
   }
@@ -269,6 +273,8 @@ export class MonitorsService {
 
   private async updateIncidentState(
     monitorId: string,
+    monitorName: string,
+    userId: string,
     newStatus: 'up' | 'down',
     lastStatusCode: number | undefined,
     lastError: string | undefined,
@@ -302,16 +308,25 @@ export class MonitorsService {
             take: alertRule.failureThreshold,
           });
 
-          if (
-            recentChecks.length >= alertRule.failureThreshold &&
-            recentChecks.every(c => !c.isUp)
-          ) {
-            currentIncident = await this.prisma.incident.update({
-              where: { id: currentIncident.id },
-              data: { notifiedAt: new Date() },
-            });
-            // Future: enqueue email job here
-          }
+            if (
+              recentChecks.length >= alertRule.failureThreshold &&
+              recentChecks.every(c => !c.isUp)
+            ) {
+              const status = await this.notificationsService.createIncidentOpenedNotification(
+                userId,
+                monitorId,
+                currentIncident.id,
+                monitorName,
+                alertRule.email
+              );
+
+              if (status === 'sent' || status === 'skipped') {
+                currentIncident = await this.prisma.incident.update({
+                  where: { id: currentIncident.id },
+                  data: { notifiedAt: new Date() },
+                });
+              }
+            }
         }
       }
     } else if (newStatus === 'up') {
@@ -323,7 +338,17 @@ export class MonitorsService {
             where: { monitorId },
           });
           if (alertRule?.notifyOnRecovery && alertRule.email) {
-            updateData.resolvedNotifiedAt = new Date();
+            const status = await this.notificationsService.createIncidentResolvedNotification(
+              userId,
+              monitorId,
+              currentIncident.id,
+              monitorName,
+              alertRule.email
+            );
+
+            if (status === 'sent' || status === 'skipped') {
+              updateData.resolvedNotifiedAt = new Date();
+            }
           }
         }
 
@@ -331,7 +356,6 @@ export class MonitorsService {
           where: { id: currentIncident.id },
           data: updateData,
         });
-        // Future: enqueue recovery email job here
       }
     }
   }

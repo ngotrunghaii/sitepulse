@@ -16,11 +16,13 @@
     "db:push": "npm run push --workspace=@sitepulse/database"
   },
   "devDependencies": {
+    "@types/nodemailer": "^8.0.1",
     "concurrently": "^10.0.4",
     "prisma": "^6.19.3",
     "typescript": "^5.4.5"
   },
   "dependencies": {
-    "@prisma/client": "^6.19.3"
+    "@prisma/client": "^6.19.3",
+    "nodemailer": "^9.0.5"
   }
 }

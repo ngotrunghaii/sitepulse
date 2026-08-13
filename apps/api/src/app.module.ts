@@ -4,9 +4,16 @@ import { MonitorsModule } from './monitors/monitors.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { AlertRulesModule } from './alert-rules/alert-rules.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, MonitorsModule, AlertRulesModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    MonitorsModule,
+    AlertRulesModule,
+    NotificationsModule,
+  ],
   controllers: [AppController],
   providers: [],
 })

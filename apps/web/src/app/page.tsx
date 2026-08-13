@@ -10,6 +10,7 @@ import AddMonitorModal from '@/components/AddMonitorModal';
 import MonitorTable from '@/components/MonitorTable';
 import IncidentPanel from '@/components/IncidentPanel';
 import AlertSettingsModal from '@/components/AlertSettingsModal';
+import NotificationLogs from '@/components/notifications/NotificationLogs';
 
 export default function Page() {
   const {
@@ -132,6 +133,10 @@ export default function Page() {
                   Sự cố gần đây
                 </h2>
                 <IncidentPanel incidents={incidents} monitors={monitors} />
+              </section>
+
+              <section>
+                <NotificationLogs />
               </section>
             </>
           )}
