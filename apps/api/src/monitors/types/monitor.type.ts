@@ -10,4 +10,6 @@ export type Monitor = {
   lastResponseTimeMs?: number;
   lastCheckedAt?: string;
   lastError?: string;
+  consecutiveFailures?: number;
+  consecutiveSuccesses?: number;
 };

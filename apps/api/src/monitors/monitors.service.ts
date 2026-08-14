@@ -9,6 +9,30 @@ import { NotificationsService } from '../notifications/notifications.service';
 
 const CHECK_HISTORY_LIMIT = 50;
 const INCIDENTS_LIMIT = 50;
+const MAX_ATTEMPTS = 2;       // retry once before giving up
+const RETRY_DELAY_MS = 500;   // wait 500ms between attempts
+
+// ─── Error message helpers ────────────────────────────────────────────────────
+
+/**
+ * Map raw HTTP status codes / error strings to a friendlier Vietnamese message
+ * that appears in the monitor detail and incidents.
+ */
+function friendlyErrorMessage(statusCode: number | undefined, rawError: string | undefined): string {
+  if (statusCode === 521 || statusCode === 522 || statusCode === 523 || statusCode === 527 || statusCode === 530) {
+    return 'Máy chủ SitePulse không truy cập được website này';
+  }
+  if (rawError && rawError.toLowerCase().includes('timeout')) {
+    return 'Máy chủ SitePulse không truy cập được website này';
+  }
+  if (statusCode !== undefined && statusCode >= 400 && statusCode <= 499) {
+    return `Lỗi phía client (HTTP ${statusCode})`;
+  }
+  if (statusCode !== undefined && statusCode >= 500 && statusCode <= 599) {
+    return `Lỗi máy chủ (HTTP ${statusCode})`;
+  }
+  return rawError || 'Lỗi mạng';
+}
 
 @Injectable()
 export class MonitorsService {
@@ -20,39 +44,20 @@ export class MonitorsService {
   // ─── Map Helpers ─────────────────────────────────────────────────────────
 
   private mapMonitor(m: any): MonitorDTO {
-    // Determine lastStatus from the most recent check if not explicitly stored
-    let lastStatus: 'up' | 'down' | 'unknown' = 'unknown';
-    let lastStatusCode: number | undefined;
-    let lastResponseTimeMs: number | undefined;
-    let lastCheckedAt: string | undefined;
-    let lastError: string | undefined;
-
-    if (m.checks && m.checks.length > 0) {
-      const latestCheck = m.checks[0];
-      lastStatus = latestCheck.isUp ? 'up' : 'down';
-      lastStatusCode = latestCheck.statusCode ?? undefined;
-      lastResponseTimeMs = latestCheck.responseTime ?? undefined;
-      lastCheckedAt = latestCheck.checkedAt.toISOString();
-    }
-
-    // Determine if there is an open incident
-    const openIncident = m.incidents?.find((i: any) => i.resolvedAt === null);
-    if (openIncident) {
-      lastError = openIncident.description ?? undefined;
-    }
-
     return {
       id: m.id,
       name: m.name,
       url: m.url,
       intervalSeconds: m.interval,
-      isActive: true, // We assume true as the schema doesn't have isActive
+      isActive: true,
       createdAt: m.createdAt.toISOString(),
-      lastStatus: m.lastStatus || 'unknown',
+      lastStatus: (m.lastStatus as 'up' | 'down' | 'unknown') || 'unknown',
       lastStatusCode: m.lastStatusCode ?? undefined,
       lastResponseTimeMs: m.lastResponseTimeMs ?? undefined,
       lastCheckedAt: m.lastCheckedAt ? m.lastCheckedAt.toISOString() : undefined,
       lastError: m.lastErrorMessage ?? undefined,
+      consecutiveFailures: m.consecutiveFailures ?? 0,
+      consecutiveSuccesses: m.consecutiveSuccesses ?? 0,
     };
   }
 
@@ -64,6 +69,9 @@ export class MonitorsService {
       statusCode: cr.statusCode ?? undefined,
       responseTimeMs: cr.responseTime ?? 0,
       checkedAt: cr.checkedAt.toISOString(),
+      error: cr.errorReason ?? undefined,
+      attemptCount: cr.attemptCount ?? 1,
+      errorReason: cr.errorReason ?? undefined,
     };
   }
 
@@ -84,16 +92,6 @@ export class MonitorsService {
     const monitors = await this.prisma.monitor.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
-      include: {
-        checks: {
-          orderBy: { checkedAt: 'desc' },
-          take: 1,
-        },
-        incidents: {
-          where: { resolvedAt: null },
-          take: 1,
-        },
-      },
     });
     return monitors.map((m) => this.mapMonitor(m));
   }
@@ -101,16 +99,6 @@ export class MonitorsService {
   async findOne(id: string, userId?: string): Promise<MonitorDTO> {
     const monitor = await this.prisma.monitor.findFirst({
       where: userId ? { id, userId } : { id },
-      include: {
-        checks: {
-          orderBy: { checkedAt: 'desc' },
-          take: 1,
-        },
-        incidents: {
-          where: { resolvedAt: null },
-          take: 1,
-        },
-      },
     });
 
     if (!monitor) {
@@ -136,7 +124,7 @@ export class MonitorsService {
   async remove(id: string, userId: string): Promise<void> {
     const monitor = await this.prisma.monitor.findFirst({ where: { id, userId } });
     if (!monitor) throw new NotFoundException(`Monitor with ID ${id} not found`);
-    
+
     try {
       await this.prisma.$transaction([
         this.prisma.checkResult.deleteMany({ where: { monitorId: id } }),
@@ -162,7 +150,7 @@ export class MonitorsService {
       orderBy: { checkedAt: 'desc' },
       take: CHECK_HISTORY_LIMIT,
     });
-    return checks.map(this.mapCheckResult);
+    return checks.map(cr => this.mapCheckResult(cr));
   }
 
   // ─── Incident Queries ────────────────────────────────────────────────────
@@ -188,9 +176,62 @@ export class MonitorsService {
     return incidents.map(this.mapIncident);
   }
 
+  // ─── HTTP Attempt ────────────────────────────────────────────────────────
+
+  /**
+   * Perform a single HTTP attempt against the given URL.
+   * Returns the result of that one attempt.
+   */
+  private async performHttpAttempt(url: string): Promise<{
+    isUp: boolean;
+    statusCode: number | undefined;
+    responseTimeMs: number;
+    errorMsg: string | undefined;
+  }> {
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), 10_000);
+    const startTime = Date.now();
+
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'SitePulse/1.0 (+https://github.com/ngotrunghaii/sitepulse)',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      });
+      const responseTimeMs = Date.now() - startTime;
+      const statusCode = response.status;
+
+      if (statusCode >= 200 && statusCode <= 399) {
+        return { isUp: true, statusCode, responseTimeMs, errorMsg: undefined };
+      }
+      const rawError = `HTTP ${statusCode}`;
+      return {
+        isUp: false,
+        statusCode,
+        responseTimeMs,
+        errorMsg: friendlyErrorMessage(statusCode, rawError),
+      };
+    } catch (error: any) {
+      const responseTimeMs = Date.now() - startTime;
+      const rawError: string =
+        error.name === 'AbortError' ? 'Request Timeout (10000ms)' : (error.message || 'Network Error');
+      return {
+        isUp: false,
+        statusCode: undefined,
+        responseTimeMs,
+        errorMsg: friendlyErrorMessage(undefined, rawError),
+      };
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+  }
+
   // ─── Core Check Logic ────────────────────────────────────────────────────
 
   async checkMonitorNow(id: string, userId?: string): Promise<MonitorDTO> {
+    // Fetch monitor with current consecutive counters
     const monitor = await this.prisma.monitor.findFirst({
       where: userId ? { id, userId } : { id },
     });
@@ -201,82 +242,115 @@ export class MonitorsService {
 
     validateMonitorUrl(monitor.url);
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    // ── Retry loop ──────────────────────────────────────────────────────
+    let finalResult: { isUp: boolean; statusCode: number | undefined; responseTimeMs: number; errorMsg: string | undefined };
+    let attemptCount = 0;
 
-    const startTime = Date.now();
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      attemptCount = attempt;
+      finalResult = await this.performHttpAttempt(monitor.url);
 
-    let newStatus: 'up' | 'down';
-    let statusCode: number | undefined;
-    let responseTimeMs: number;
-    let errorMsg: string | undefined;
-
-    try {
-      const response = await fetch(monitor.url, {
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'SitePulse/1.0 (+https://github.com/ngotrunghaii/sitepulse)',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-        }
-      });
-      responseTimeMs = Date.now() - startTime;
-      statusCode = response.status;
-
-      if (response.status >= 200 && response.status <= 399) {
-        newStatus = 'up';
-      } else if (response.status >= 400 && response.status <= 499) {
-        newStatus = 'down';
-        errorMsg = `Client error (HTTP ${response.status})`;
-      } else if (response.status >= 500 && response.status <= 599) {
-        newStatus = 'down';
-        errorMsg = `Server error (HTTP ${response.status})`;
-      } else {
-        newStatus = 'down';
-        errorMsg = `HTTP Status: ${response.status}`;
+      if (finalResult.isUp) {
+        // Succeeded — no more attempts needed
+        break;
       }
-    } catch (error: any) {
-      responseTimeMs = Date.now() - startTime;
-      newStatus = 'down';
-      statusCode = undefined;
-      errorMsg =
-        error.name === 'AbortError'
-          ? 'Request Timeout (10000ms)'
-          : error.message || 'Network Error';
-    } finally {
-      clearTimeout(timeout);
+
+      if (attempt < MAX_ATTEMPTS) {
+        // Brief pause before retrying
+        await new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      }
     }
 
-    await this.recordCheckResult(monitor.id, newStatus, statusCode, responseTimeMs);
+    const { isUp, statusCode, responseTimeMs, errorMsg } = finalResult!;
 
+    // ── Fetch alert rule for failureThreshold ───────────────────────────
+    const alertRule = await this.prisma.alertRule.findUnique({ where: { monitorId: id } });
+    const failureThreshold = alertRule?.failureThreshold ?? 1;
+
+    // ── Compute new consecutive counters ────────────────────────────────
+    const currentFailures: number = (monitor as any).consecutiveFailures ?? 0;
+    const currentSuccesses: number = (monitor as any).consecutiveSuccesses ?? 0;
+
+    let newConsecutiveFailures: number;
+    let newConsecutiveSuccesses: number;
+    let newLastStatus: string;
+    let isWarning = false;  // sub-threshold DOWN — don't flip monitor status yet
+
+    if (isUp) {
+      newConsecutiveFailures = 0;
+      newConsecutiveSuccesses = currentSuccesses + 1;
+      newLastStatus = 'up';
+    } else {
+      newConsecutiveFailures = currentFailures + 1;
+      newConsecutiveSuccesses = 0;
+
+      if (newConsecutiveFailures >= failureThreshold) {
+        newLastStatus = 'down';
+      } else {
+        // Below threshold — preserve existing status, mark as warning internally
+        newLastStatus = (monitor as any).lastStatus || 'unknown';
+        isWarning = true;
+      }
+    }
+
+    // ── Persist check result ─────────────────────────────────────────────
+    await this.recordCheckResult(
+      monitor.id,
+      isUp,
+      statusCode,
+      responseTimeMs,
+      attemptCount,
+      errorMsg,
+    );
+
+    // ── Update monitor row ───────────────────────────────────────────────
     await this.prisma.monitor.update({
       where: { id: monitor.id },
       data: {
-        lastStatus: newStatus,
-        lastStatusCode: statusCode,
-        lastResponseTimeMs: responseTimeMs,
+        lastStatus: newLastStatus,
+        lastStatusCode: isUp ? (statusCode ?? null) : (statusCode ?? (monitor as any).lastStatusCode ?? null),
+        lastResponseTimeMs: isUp ? responseTimeMs : ((monitor as any).lastResponseTimeMs ?? null),
         lastCheckedAt: new Date(),
-        lastErrorMessage: errorMsg,
-      }
+        lastErrorMessage: isUp ? null : (errorMsg ?? null),
+        consecutiveFailures: newConsecutiveFailures,
+        consecutiveSuccesses: newConsecutiveSuccesses,
+      } as any,
     });
 
-    await this.updateIncidentState(monitor.id, monitor.name, monitor.userId, newStatus, statusCode, errorMsg);
+    // ── Incident management ──────────────────────────────────────────────
+    await this.updateIncidentState(
+      monitor.id,
+      monitor.name,
+      monitor.userId,
+      isUp,
+      isWarning,
+      newConsecutiveFailures,
+      failureThreshold,
+      alertRule,
+      statusCode,
+      errorMsg,
+    );
 
     return this.findOne(monitor.id);
   }
 
   private async recordCheckResult(
     monitorId: string,
-    status: 'up' | 'down',
+    isUp: boolean,
     statusCode: number | undefined,
     responseTimeMs: number,
+    attemptCount: number,
+    errorReason: string | undefined,
   ): Promise<void> {
     await this.prisma.checkResult.create({
       data: {
         monitorId,
-        isUp: status === 'up',
+        isUp,
         statusCode,
         responseTime: responseTimeMs,
-      },
+        attemptCount,
+        errorReason: errorReason ?? null,
+      } as any,
     });
 
     // Cleanup old checks to prevent infinite growth
@@ -288,9 +362,8 @@ export class MonitorsService {
         skip: 500,
         select: { id: true },
       });
-      const idsToDelete = oldChecks.map((c) => c.id);
       await this.prisma.checkResult.deleteMany({
-        where: { id: { in: idsToDelete } },
+        where: { id: { in: oldChecks.map((c) => c.id) } },
       });
     }
   }
@@ -299,7 +372,11 @@ export class MonitorsService {
     monitorId: string,
     monitorName: string,
     userId: string,
-    newStatus: 'up' | 'down',
+    isUp: boolean,
+    isWarning: boolean,
+    consecutiveFailures: number,
+    failureThreshold: number,
+    alertRule: any,
     lastStatusCode: number | undefined,
     lastError: string | undefined,
   ): Promise<void> {
@@ -308,24 +385,13 @@ export class MonitorsService {
       orderBy: { startedAt: 'desc' },
     });
 
-    let currentIncident = existingOpen;
+    if (!isUp && !isWarning) {
+      // ── True DOWN (threshold reached) — open or notify existing incident ──
+      if (consecutiveFailures >= failureThreshold) {
+        let currentIncident = existingOpen;
 
-    if (newStatus === 'down') {
-      const alertRule = await this.prisma.alertRule.findUnique({
-        where: { monitorId },
-      });
-      const threshold = alertRule?.failureThreshold ?? 1;
-
-      const recentChecks = await this.prisma.checkResult.findMany({
-        where: { monitorId },
-        orderBy: { checkedAt: 'desc' },
-        take: threshold,
-      });
-
-      const thresholdMet = recentChecks.length >= threshold && recentChecks.every(c => !c.isUp);
-
-      if (thresholdMet) {
         if (!currentIncident) {
+          // Only open a new incident if none is open
           currentIncident = await this.prisma.incident.create({
             data: {
               monitorId,
@@ -334,69 +400,67 @@ export class MonitorsService {
           });
         }
 
+        // Send notification if not yet notified
         if (!currentIncident.notifiedAt && alertRule?.enabled && alertRule.email) {
           const status = await this.notificationsService.createIncidentOpenedNotification(
             userId,
             monitorId,
             currentIncident.id,
             monitorName,
-            alertRule.email
+            alertRule.email,
           );
 
           if (status === 'sent' || status === 'skipped') {
-            currentIncident = await this.prisma.incident.update({
+            await this.prisma.incident.update({
               where: { id: currentIncident.id },
               data: { notifiedAt: new Date() },
             });
           }
         }
       }
-    } else if (newStatus === 'up') {
-      if (currentIncident) {
+      // If below threshold (isWarning=false here shouldn't happen, but be safe): do nothing
+    } else if (isUp) {
+      // ── UP — resolve any open incident ───────────────────────────────
+      if (existingOpen) {
         const updateData: any = { resolvedAt: new Date() };
 
-        if (currentIncident.notifiedAt && !currentIncident.resolvedNotifiedAt) {
-          const alertRule = await this.prisma.alertRule.findUnique({
-            where: { monitorId },
-          });
-          if (alertRule?.notifyOnRecovery && alertRule.email) {
-            const status = await this.notificationsService.createIncidentResolvedNotification(
-              userId,
-              monitorId,
-              currentIncident.id,
-              monitorName,
-              alertRule.email
-            );
+        if (existingOpen.notifiedAt && !existingOpen.resolvedNotifiedAt && alertRule?.notifyOnRecovery && alertRule.email) {
+          const status = await this.notificationsService.createIncidentResolvedNotification(
+            userId,
+            monitorId,
+            existingOpen.id,
+            monitorName,
+            alertRule.email,
+          );
 
-            if (status === 'sent' || status === 'skipped') {
-              updateData.resolvedNotifiedAt = new Date();
-            }
+          if (status === 'sent' || status === 'skipped') {
+            updateData.resolvedNotifiedAt = new Date();
           }
         }
 
         await this.prisma.incident.update({
-          where: { id: currentIncident.id },
+          where: { id: existingOpen.id },
           data: updateData,
         });
       }
     }
+    // isWarning=true: sub-threshold failure, do not touch incidents
   }
 
   async runDueChecks(): Promise<void> {
-    // Get all monitors, with their latest check result
     const monitors = await this.prisma.monitor.findMany({
-      include: {
-        checks: {
-          orderBy: { checkedAt: 'desc' },
-          take: 1,
-        },
+      select: {
+        id: true,
+        url: true,
+        interval: true,
+        lastCheckedAt: true,
       },
     });
-    
+
     const now = Date.now();
 
     for (const monitor of monitors) {
-      const lastCheckedAt = monitor.checks.length > 0 ? monitor.checks[0].checkedAt.getTime() : 0;
+      const lastCheckedAt = monitor.lastCheckedAt ? monitor.lastCheckedAt.getTime() : 0;
       const elapsedSeconds = (now - lastCheckedAt) / 1000;
 
       if (elapsedSeconds >= monitor.interval) {

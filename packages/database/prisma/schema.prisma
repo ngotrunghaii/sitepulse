@@ -45,12 +45,14 @@ model Monitor {
   alertRule   AlertRule?
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
-  notificationLogs NotificationLog[]
+  notificationLogs   NotificationLog[]
   lastStatus         String?
   lastStatusCode     Int?
   lastResponseTimeMs Int?
   lastCheckedAt      DateTime?
   lastErrorMessage   String?
+  consecutiveFailures  Int @default(0)
+  consecutiveSuccesses Int @default(0)
 }
 
 model CheckResult {
@@ -60,6 +62,8 @@ model CheckResult {
   statusCode   Int?
   responseTime Int?     // in ms
   isUp         Boolean
+  attemptCount Int      @default(1)
+  errorReason  String?
   checkedAt    DateTime @default(now())
 }
 

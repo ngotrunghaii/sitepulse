@@ -14,6 +14,8 @@ export type Monitor = {
   lastResponseTimeMs?: number;
   lastCheckedAt?: string;
   lastError?: string;
+  consecutiveFailures?: number;
+  consecutiveSuccesses?: number;
 };
 
 export type CreateMonitorDto = {
@@ -24,14 +26,18 @@ export type CreateMonitorDto = {
 
 // ─── CheckResult ─────────────────────────────────────────────────────────────
 
+export type CheckResultStatus = 'up' | 'warning' | 'down';
+
 export type CheckResult = {
   id: string;
   monitorId: string;
-  status: 'up' | 'down';
+  status: CheckResultStatus;
   statusCode?: number;
   responseTimeMs: number;
   checkedAt: string;
   error?: string;
+  attemptCount?: number;
+  errorReason?: string;
 };
 
 // ─── Incident ─────────────────────────────────────────────────────────────────

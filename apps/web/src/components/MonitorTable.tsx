@@ -199,7 +199,10 @@ export default function MonitorTable({
                                 backgroundColor: 'var(--sp-error-bg)', border: '1px solid #fecaca',
                                 fontSize: '0.875rem', color: 'var(--sp-error-text)',
                               }}>
-                                <strong>Lỗi:</strong> Không truy cập được từ máy chủ SitePulse {monitor.lastError ? `(${monitor.lastError})` : ''}
+                                <strong>Lỗi:</strong>{' '}
+                                {monitor.lastError
+                                  ? monitor.lastError
+                                  : 'Máy chủ SitePulse không truy cập được website này'}
                               </div>
                             )}
 
@@ -212,7 +215,7 @@ export default function MonitorTable({
                               </span>
                             </div>
                             <p style={{ margin: '0.5rem 0 0.5rem', fontSize: '0.75rem', color: 'var(--sp-text-muted)' }}>
-                              Một website có thể mở được trên trình duyệt của bạn nhưng vẫn lỗi khi máy chủ SitePulse kiểm tra nếu website chặn request tự động hoặc phản hồi quá chậm.
+                              Website có thể mở được trên trình duyệt của bạn nhưng bị chặn khi kiểm tra từ máy chủ. SitePulse thử lại 2 lần trước khi xác nhận lỗi.
                             </p>
                             <div style={{ marginTop: '0.5rem' }}>
                               <CheckHistoryTable checks={recentChecks} />
