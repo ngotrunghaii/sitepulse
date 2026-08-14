@@ -48,11 +48,11 @@ export class MonitorsService {
       intervalSeconds: m.interval,
       isActive: true, // We assume true as the schema doesn't have isActive
       createdAt: m.createdAt.toISOString(),
-      lastStatus,
-      lastStatusCode,
-      lastResponseTimeMs,
-      lastCheckedAt,
-      lastError,
+      lastStatus: m.lastStatus || 'unknown',
+      lastStatusCode: m.lastStatusCode ?? undefined,
+      lastResponseTimeMs: m.lastResponseTimeMs ?? undefined,
+      lastCheckedAt: m.lastCheckedAt ? m.lastCheckedAt.toISOString() : undefined,
+      lastError: m.lastErrorMessage ?? undefined,
     };
   }
 
@@ -202,7 +202,7 @@ export class MonitorsService {
     validateMonitorUrl(monitor.url);
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const timeout = setTimeout(() => controller.abort(), 10000);
 
     const startTime = Date.now();
 
@@ -212,12 +212,24 @@ export class MonitorsService {
     let errorMsg: string | undefined;
 
     try {
-      const response = await fetch(monitor.url, { signal: controller.signal });
+      const response = await fetch(monitor.url, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'SitePulse/1.0 (+https://github.com/ngotrunghaii/sitepulse)',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        }
+      });
       responseTimeMs = Date.now() - startTime;
       statusCode = response.status;
 
       if (response.status >= 200 && response.status <= 399) {
         newStatus = 'up';
+      } else if (response.status >= 400 && response.status <= 499) {
+        newStatus = 'down';
+        errorMsg = `Client error (HTTP ${response.status})`;
+      } else if (response.status >= 500 && response.status <= 599) {
+        newStatus = 'down';
+        errorMsg = `Server error (HTTP ${response.status})`;
       } else {
         newStatus = 'down';
         errorMsg = `HTTP Status: ${response.status}`;
@@ -228,13 +240,25 @@ export class MonitorsService {
       statusCode = undefined;
       errorMsg =
         error.name === 'AbortError'
-          ? 'Request Timeout (5000ms)'
+          ? 'Request Timeout (10000ms)'
           : error.message || 'Network Error';
     } finally {
       clearTimeout(timeout);
     }
 
     await this.recordCheckResult(monitor.id, newStatus, statusCode, responseTimeMs);
+
+    await this.prisma.monitor.update({
+      where: { id: monitor.id },
+      data: {
+        lastStatus: newStatus,
+        lastStatusCode: statusCode,
+        lastResponseTimeMs: responseTimeMs,
+        lastCheckedAt: new Date(),
+        lastErrorMessage: errorMsg,
+      }
+    });
+
     await this.updateIncidentState(monitor.id, monitor.name, monitor.userId, newStatus, statusCode, errorMsg);
 
     return this.findOne(monitor.id);
@@ -287,46 +311,44 @@ export class MonitorsService {
     let currentIncident = existingOpen;
 
     if (newStatus === 'down') {
-      if (!currentIncident) {
-        currentIncident = await this.prisma.incident.create({
-          data: {
-            monitorId,
-            description: lastError || `HTTP Status: ${lastStatusCode ?? 'Unknown'}`,
-          },
-        });
-      }
+      const alertRule = await this.prisma.alertRule.findUnique({
+        where: { monitorId },
+      });
+      const threshold = alertRule?.failureThreshold ?? 1;
 
-      if (!currentIncident.notifiedAt) {
-        const alertRule = await this.prisma.alertRule.findUnique({
-          where: { monitorId },
-        });
+      const recentChecks = await this.prisma.checkResult.findMany({
+        where: { monitorId },
+        orderBy: { checkedAt: 'desc' },
+        take: threshold,
+      });
 
-        if (alertRule?.enabled && alertRule.email) {
-          const recentChecks = await this.prisma.checkResult.findMany({
-            where: { monitorId },
-            orderBy: { checkedAt: 'desc' },
-            take: alertRule.failureThreshold,
+      const thresholdMet = recentChecks.length >= threshold && recentChecks.every(c => !c.isUp);
+
+      if (thresholdMet) {
+        if (!currentIncident) {
+          currentIncident = await this.prisma.incident.create({
+            data: {
+              monitorId,
+              description: lastError || `HTTP Status: ${lastStatusCode ?? 'Unknown'}`,
+            },
           });
+        }
 
-            if (
-              recentChecks.length >= alertRule.failureThreshold &&
-              recentChecks.every(c => !c.isUp)
-            ) {
-              const status = await this.notificationsService.createIncidentOpenedNotification(
-                userId,
-                monitorId,
-                currentIncident.id,
-                monitorName,
-                alertRule.email
-              );
+        if (!currentIncident.notifiedAt && alertRule?.enabled && alertRule.email) {
+          const status = await this.notificationsService.createIncidentOpenedNotification(
+            userId,
+            monitorId,
+            currentIncident.id,
+            monitorName,
+            alertRule.email
+          );
 
-              if (status === 'sent' || status === 'skipped') {
-                currentIncident = await this.prisma.incident.update({
-                  where: { id: currentIncident.id },
-                  data: { notifiedAt: new Date() },
-                });
-              }
-            }
+          if (status === 'sent' || status === 'skipped') {
+            currentIncident = await this.prisma.incident.update({
+              where: { id: currentIncident.id },
+              data: { notifiedAt: new Date() },
+            });
+          }
         }
       }
     } else if (newStatus === 'up') {

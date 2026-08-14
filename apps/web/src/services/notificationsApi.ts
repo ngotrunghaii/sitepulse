@@ -1,5 +1,3 @@
-import { getAuthToken } from '@/utils/auth';
-
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 export interface NotificationLog {
@@ -17,7 +15,7 @@ export interface NotificationLog {
 
 export const notificationsApi = {
   getLogs: async (): Promise<NotificationLog[]> => {
-    const token = getAuthToken();
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
     const res = await fetch(`${API_URL}/notifications`, {
       headers: {
         Authorization: `Bearer ${token}`,

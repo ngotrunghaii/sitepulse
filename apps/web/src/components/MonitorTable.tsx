@@ -193,13 +193,13 @@ export default function MonitorTable({
                               </div>
                             )}
 
-                            {monitor.lastError && !hasIncident && (
+                            {monitor.lastStatus === 'down' && !hasIncident && (
                               <div style={{
                                 marginBottom: '1rem', padding: '0.75rem 1rem', borderRadius: '6px',
                                 backgroundColor: 'var(--sp-error-bg)', border: '1px solid #fecaca',
                                 fontSize: '0.875rem', color: 'var(--sp-error-text)',
                               }}>
-                                <strong>Lỗi:</strong> {monitor.lastError}
+                                <strong>Lỗi:</strong> Không truy cập được từ máy chủ SitePulse {monitor.lastError ? `(${monitor.lastError})` : ''}
                               </div>
                             )}
 
@@ -211,6 +211,9 @@ export default function MonitorTable({
                                 Tần suất: {monitor.intervalSeconds}s
                               </span>
                             </div>
+                            <p style={{ margin: '0.5rem 0 0.5rem', fontSize: '0.75rem', color: 'var(--sp-text-muted)' }}>
+                              Một website có thể mở được trên trình duyệt của bạn nhưng vẫn lỗi khi máy chủ SitePulse kiểm tra nếu website chặn request tự động hoặc phản hồi quá chậm.
+                            </p>
                             <div style={{ marginTop: '0.5rem' }}>
                               <CheckHistoryTable checks={recentChecks} />
                             </div>

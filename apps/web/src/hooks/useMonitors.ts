@@ -59,7 +59,7 @@ export function useMonitors(): UseMonitorsReturn {
   const stats = useMemo(() => {
     const up = monitors.filter((m) => m.lastStatus === 'up').length;
     const down = monitors.filter((m) => m.lastStatus === 'down').length;
-    const checked = monitors.filter((m) => m.lastResponseTimeMs !== undefined);
+    const checked = monitors.filter((m) => m.lastStatus === 'up' && m.lastResponseTimeMs !== undefined);
     const avgMs = checked.length
       ? Math.round(checked.reduce((s, m) => s + (m.lastResponseTimeMs ?? 0), 0) / checked.length)
       : null;
@@ -150,21 +150,14 @@ export function useMonitors(): UseMonitorsReturn {
   const handleCheck = useCallback(async (id: string) => {
     try {
       setCheckingId(id);
-      const updated = await monitorsApi.check(id);
-      setMonitors((prev) => prev.map((m) => (m.id === id ? updated : m)));
-      // Refresh cả checks lẫn incidents sau khi check thủ công
-      await Promise.all([
-        monitorsApi.getChecks(id).then((checks) =>
-          setHistories((prev) => ({ ...prev, [id]: checks })),
-        ).catch(() => {}),
-        fetchIncidents(),
-      ]);
+      await monitorsApi.check(id);
+      await fetchAll();
     } catch (err: any) {
       alert(err.message || 'Lỗi khi kiểm tra website.');
     } finally {
       setCheckingId(null);
     }
-  }, [fetchIncidents]);
+  }, [fetchAll]);
 
   return {
     monitors, histories, incidents, openIncidentsByMonitor, stats,
